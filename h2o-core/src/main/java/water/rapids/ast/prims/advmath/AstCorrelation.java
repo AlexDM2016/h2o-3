@@ -115,7 +115,7 @@ public class AstCorrelation extends AstPrimitive {
           if (v.naCnt() != 0)
             throw new IllegalArgumentException("Mode is 'all.obs' but NAs are present");
       }
-      CorTaskEverything[] cvs = new CorTaskEverything[ncoly];
+      TaskEverything[] cvs = new TaskEverything[ncoly];
 
       double[] xmeans = new double[ncolx];
       for (int x = 0; x < ncoly; x++)
@@ -123,7 +123,7 @@ public class AstCorrelation extends AstPrimitive {
 
       // Launch tasks; each does all Xs vs one Y
       for (int y = 0; y < ncoly; y++) {
-        cvs[y] = new CorTaskEverything(vecys[y].mean(), xmeans).dfork(new Frame(vecys[y]).add(frx));
+        cvs[y] = new TaskEverything(vecys[y].mean(), xmeans).dfork(new Frame(vecys[y]).add(frx));
       }
 
       // 1-col returns scalar
@@ -133,38 +133,35 @@ public class AstCorrelation extends AstPrimitive {
 
       //Calculate covariance of x & y, variance of x, variance of  y, standard deviation of x,
       //and standard deviation of y
-      double[] cov = new double[ncoly];
-      double[] varx = new double[ncoly];
-      double[] vary = new double[ncoly];
-      double[] denom;
+      Vec[] cov = new Vec[ncoly];
+      Key<Vec>[] keys_cov = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
+      Vec[] sigmax = new Vec[ncoly];
+      Key<Vec>[] keys_varx = Vec.VectorGroup.VG_LEN1.addVecs(ncolx);
+      Vec[] sigmay = new Vec[ncoly];
+      Key<Vec>[] keys_vary = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
+      Vec[] denom = new Vec[ncoly];;
+
       for (int y = 0; y < ncoly; y++) {
-        cov = ArrayUtils.div(cvs[y].getResult()._cor, (fry.numRows() - 1));
-        vary = ArrayUtils.div(cvs[y].getResult()._denomy,(fry.numRows()-1));
-        varx = ArrayUtils.div(cvs[y].getResult()._denomx,(frx.numRows()-1));
+        cov[y] = Vec.makeVec(ArrayUtils.div(cvs[y].getResult()._cor, (fry.numRows() - 1)), keys_cov[y]);
+        sigmay[y] = Vec.makeVec(square(ArrayUtils.div(cvs[y].getResult()._denomy, (fry.numRows() - 1))),keys_vary[y]);
+        sigmay[y] = Vec.makeVec(square(ArrayUtils.div(cvs[y].getResult()._denomx,(frx.numRows()-1))),keys_varx[y]);
       }
-      double[] sdx = square_root(varx);
-      double[] sdy = square_root(vary);
 
       //Denominator for correlations calculation is sigma_x * sigma_y
-      denom = ArrayUtils.mult(sdy,sdx);
 
       //Gather final result, which is the correlation coefficient per column
-      double[] result = ArrayUtils.div(cov,denom);
-      Vec[] res = new Vec[ncoly];
-      Key<Vec>[] keys = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
-      for (int y = 0; y < ncoly; y++) {
-        res[y] = Vec.makeVec(result,keys[y]);
-      }
-      return new ValFrame(new Frame(fry._names, res));
+
+      //Return result
+      return new ValFrame(new Frame(fry._names, sigmax));
     } else { //if (mode.equals(Mode.CompleteObs))
 
-      CorTaskCompleteObsMean taskCompleteObsMean = new CorTaskCompleteObsMean(ncoly, ncolx).doAll(new Frame(fry).add(frx));
+      TaskCompleteObsMean taskCompleteObsMean = new TaskCompleteObsMean(ncoly, ncolx).doAll(new Frame(fry).add(frx));
       long NACount = taskCompleteObsMean._NACount;
       double[] ymeans = ArrayUtils.div(taskCompleteObsMean._ysum, fry.numRows() - NACount);
       double[] xmeans = ArrayUtils.div(taskCompleteObsMean._xsum, fry.numRows() - NACount);
 
       // 1 task with all Xs and Ys
-      CorTaskCompleteObs cvs = new CorTaskCompleteObs(ymeans, xmeans).doAll(new Frame(fry).add(frx));
+      TaskCompleteObs cvs = new TaskCompleteObs(ymeans, xmeans).doAll(new Frame(fry).add(frx));
 
       // 1-col returns scalar
       if (ncolx == 1 && ncoly == 1) {
@@ -181,13 +178,45 @@ public class AstCorrelation extends AstPrimitive {
     }
   }
 
-  private static class CorTaskEverything extends MRTask<CorTaskEverything> {
+  private static class CorTask extends MRTask<CorTask>{
+    Vec[] _sigmax;
+    Vec[] _sigmay;
+    Vec[] _cov;
+    Vec[] _denom;
+
+    CorTask(Vec[] sigmax, Vec[] sigmay, Vec[] cov){
+      _sigmax = sigmax;
+      _sigmay = sigmay;
+      _cov = cov;
+    }
+
+    @Override
+    public void map(Chunk cs[]) {
+      final int ncolsx = cs.length - 1;
+      final Chunk cy = cs[0];
+      final int len = cy._len;
+      _cov = new Vec[ncolsx];
+      _denom = new Vec[ncolsx];
+      double sum;
+      for (int row = 0; row < len; row++) {
+          sum += ;
+        }
+        _cov = sum;
+      }
+    }
+
+    @Override
+    public void reduce(TaskEverything cvt) {
+      ArrayUtils.add(_cor, cvt._cor);
+    }
+  }
+  private static class TaskEverything extends MRTask<TaskEverything> {
     double[] _cor;
     double[] _denomx;
     double[] _denomy;
     final double _xmeans[], _ymean;
 
-    CorTaskEverything(double ymean, double[] xmeans) {
+    TaskEverything(double ymean, double[] xmeans) {
       _ymean = ymean;
       _xmeans = xmeans;
     }
@@ -221,19 +250,19 @@ public class AstCorrelation extends AstPrimitive {
     }
 
     @Override
-    public void reduce(CorTaskEverything cvt) {
+    public void reduce(TaskEverything cvt) {
       ArrayUtils.add(_cor, cvt._cor);
       ArrayUtils.add(_denomx, cvt._denomx);
       ArrayUtils.add(_denomy, cvt._denomy);
     }
   }
 
-  private static class CorTaskCompleteObsMean extends MRTask<CorTaskCompleteObsMean> {
+  private static class TaskCompleteObsMean extends MRTask<TaskCompleteObsMean> {
     double[] _xsum, _ysum;
     long _NACount;
     int _ncolx, _ncoly;
 
-    CorTaskCompleteObsMean(int ncoly, int ncolx) {
+    TaskCompleteObsMean(int ncoly, int ncolx) {
       _ncolx = ncolx;
       _ncoly = ncoly;
     }
@@ -288,20 +317,20 @@ public class AstCorrelation extends AstPrimitive {
     }
 
     @Override
-    public void reduce(CorTaskCompleteObsMean cvt) {
+    public void reduce(TaskCompleteObsMean cvt) {
       ArrayUtils.add(_xsum, cvt._xsum);
       ArrayUtils.add(_ysum, cvt._ysum);
       _NACount += cvt._NACount;
     }
   }
 
-  private static class CorTaskCompleteObs extends MRTask<CorTaskCompleteObs> {
+  private static class TaskCompleteObs extends MRTask<TaskCompleteObs> {
     double[][] _cor;
     double[][] _denomx;
     double[][] _denomy;
     final double _xmeans[], _ymeans[];
 
-    CorTaskCompleteObs(double[] ymeans, double[] xmeans) {
+    TaskCompleteObs(double[] ymeans, double[] xmeans) {
       _ymeans = ymeans;
       _xmeans = xmeans;
     }
@@ -368,14 +397,14 @@ public class AstCorrelation extends AstPrimitive {
     }
 
     @Override
-    public void reduce(CorTaskCompleteObs cvt) {
+    public void reduce(TaskCompleteObs cvt) {
       ArrayUtils.add(_cor, cvt._cor);
       ArrayUtils.add(_denomx, cvt._denomx);
       ArrayUtils.add(_denomy, cvt._denomy);
     }
   }
 
-  public static double[] square_root (double [] array) {
+  public static double[] square (double [] array) {
     double[] result = new double[array.length];
     for(int i = 0; i < array.length ; i++ )
       result[i] = Math.sqrt(array[i]);
