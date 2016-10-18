@@ -437,18 +437,34 @@ final class RollupStats extends Iced {
           Value oldv = DKV.DputIfMatch(_rsKey, nnn, v, fs);
           fs.blockForPending();
           if(oldv == v){ // got the lock, compute the rollups
-            Roll r = new Roll(null,_rsKey).doAll(vec);
-                // computed the stats, now compute histo if needed and install the response and quit
-            r._rs._checksum ^= vec.length();
-            if(_computeHisto)
-              computeHisto(r._rs, vec, nnn);
-            else
-              installResponse(nnn, r._rs);
-            break;
+            try {
+              Roll r = new Roll(null, _rsKey).doAll(vec);
+              // computed the stats, now compute histo if needed and install the response and quit
+              r._rs._checksum ^= vec.length();
+              if (_computeHisto)
+                computeHisto(r._rs, vec, nnn);
+              else
+                installResponse(nnn, r._rs);
+              break;
+            } catch (Exception e) {
+              if (cleanupStats(nnn))
+                throw e;
+              else
+                throw new IllegalStateException("Unable to clean up RollupStats after an exception (see cause). " +
+                      "This could cause a key leakage, key=" + _rsKey, e);
+            }
           } // else someone else is modifying the rollups => try again
         }
       }
       tryComplete();
+    }
+
+    private boolean cleanupStats(Value current) {
+      Futures fs = new Futures();
+      Value old = DKV.DputIfMatch(_rsKey, null, current, fs);
+      boolean success = old != current;
+      fs.blockForPending();
+      return success;
     }
 
     final void computeHisto(final RollupStats rs, Vec vec, final Value nnn) {
